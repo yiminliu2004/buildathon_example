@@ -175,7 +175,10 @@ def process_refund(db: Session, order_id: int) -> dict:
     if order.status == "refunded":
         raise ValueError("Order already refunded")
 
-    # Use the order total (what the customer actually paid) as the refund amount
+    # Use the order total (what the customer actually paid) as the refund amount.
+    # This correctly accounts for:
+    # - The price at the time of purchase (not current product prices)
+    # - Any discounts (loyalty tier, promo codes) that were applied
     refund_amount = order.total
 
     # Restore stock for each item
