@@ -175,18 +175,19 @@ def process_refund(db: Session, order_id: int) -> dict:
     if order.status == "refunded":
         raise ValueError("Order already refunded")
 
-    # Calculate refund by looking up each product's current price
-    refund_amount = 0.0
+    # Use the actual amount the customer paid (order.total)
+    # This correctly accounts for discounts and price-at-purchase
+    refund_amount = order.total
+
+    # Restore stock for each item in the order
     for item in order.items:
         product = db.query(Product).filter(Product.id == item.product_id).first()
         if product:
-            refund_amount += product.price * item.quantity
-            # Restore stock
             product.stock += item.quantity
 
-    # Deduct loyalty points
+    # Deduct loyalty points based on the original amount paid
     customer = order.customer
-    customer.loyalty_points -= int(refund_amount)
+    customer.loyalty_points -= int(order.total)
     if customer.loyalty_points < 0:
         customer.loyalty_points = 0
 
@@ -207,4 +208,3 @@ def process_refund(db: Session, order_id: int) -> dict:
         "refund_amount": round(refund_amount, 2),
         "status": "refunded",
     }
-
