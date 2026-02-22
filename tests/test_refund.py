@@ -371,11 +371,11 @@ class TestRefundErrorHandling:
             promo_code_str=None
         )
         
-        # Process the first refund - should succeed
+        # First refund should succeed
         result = process_refund(db=db_session, order_id=order.id)
         assert result["status"] == "refunded"
         
-        # Try to refund again - should raise error
+        # Second refund should raise an error
         with pytest.raises(ValueError, match="Order already refunded"):
             process_refund(db=db_session, order_id=order.id)
 
@@ -385,3 +385,60 @@ class TestRefundErrorHandling:
         """
         with pytest.raises(ValueError, match="Order not found"):
             process_refund(db=db_session, order_id=99999)
+
+
+class TestRefundLoyaltyPoints:
+    """Tests for loyalty points adjustment during refunds."""
+
+    def test_refund_deducts_loyalty_points(self, db_session, sample_data):
+        """
+        Test that refund correctly deducts the loyalty points that were awarded.
+        """
+        product = sample_data["product"]
+        customer = sample_data["customer"]
+        
+        initial_points = customer.loyalty_points  # 0
+        
+        # Place an order for $100
+        order = place_order(
+            db=db_session,
+            customer_id=customer.id,
+            items=[{"product_id": product.id, "quantity": 1}],
+            promo_code_str=None
+        )
+        
+        # Customer should have earned 100 points
+        db_session.refresh(customer)
+        assert customer.loyalty_points == initial_points + 100
+        
+        # Process refund
+        process_refund(db=db_session, order_id=order.id)
+        
+        # Points should be deducted back to original
+        db_session.refresh(customer)
+        assert customer.loyalty_points == initial_points
+
+    def test_refund_does_not_make_points_negative(self, db_session, sample_data):
+        """
+        Test that refund doesn't result in negative loyalty points.
+        """
+        product = sample_data["product"]
+        customer = sample_data["customer"]
+        
+        # Place an order for $100
+        order = place_order(
+            db=db_session,
+            customer_id=customer.id,
+            items=[{"product_id": product.id, "quantity": 1}],
+            promo_code_str=None
+        )
+        
+        # Manually reduce points to simulate spending
+        customer.loyalty_points = 50
+        db_session.commit()
+        
+        # Process refund - should deduct 100 points but not go negative
+        process_refund(db=db_session, order_id=order.id)
+        
+        db_session.refresh(customer)
+        assert customer.loyalty_points == 0  # Not negative
