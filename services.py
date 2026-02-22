@@ -188,10 +188,20 @@ def process_refund(db: Session, order_id: int) -> dict:
     if order.status == "refunded":
         raise ValueError("Order already refunded")
 
-    # Use the order total (what the customer actually paid) as the refund amount.
+    # FIX: Use the order total (what the customer actually paid) as the refund amount.
     # This correctly accounts for:
     # - The price at the time of purchase (not current product prices)
     # - Any discounts (loyalty tier, promo codes) that were applied
+    #
+    # Previously, this code incorrectly calculated the refund by iterating through
+    # order items and looking up current product prices:
+    #     refund_amount = 0.0
+    #     for item in order.items:
+    #         product = db.query(Product).filter(Product.id == item.product_id).first()
+    #         if product:
+    #             refund_amount += product.price * item.quantity  # BUG: uses current price!
+    #
+    # This caused incorrect refunds when product prices changed after purchase.
     refund_amount = order.total
 
     # Restore stock for each item
