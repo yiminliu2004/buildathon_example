@@ -229,3 +229,43 @@ def test_refund_with_price_decrease(db_session, sample_product, sample_customer)
     # Refund should be $100 (what customer paid), NOT $50 (current lower price)
     assert result["refund_amount"] == 100.00
     assert result["refund_amount"] == original_total
+
+
+def test_refund_multiple_items_uses_order_total(db_session, sample_customer):
+    """
+    Test that refund for orders with multiple items uses order.total,
+    not sum of current prices.
+    """
+    # Create two products
+    product1 = Product(name="Product A", price=50.00, stock=10)
+    product2 = Product(name="Product B", price=30.00, stock=10)
+    db_session.add_all([product1, product2])
+    db_session.commit()
+    db_session.refresh(product1)
+    db_session.refresh(product2)
+    
+    # Place order: 2x Product A ($100) + 1x Product B ($30) = $130 total
+    order = place_order(
+        db=db_session,
+        customer_id=sample_customer.id,
+        items=[
+            {"product_id": product1.id, "quantity": 2},
+            {"product_id": product2.id, "quantity": 1}
+        ]
+    )
+    
+    original_total = order.total
+    assert original_total == 130.00
+    
+    # Change both product prices after order
+    product1.price = 75.00  # was 50
+    product2.price = 45.00  # was 30
+    db_session.commit()
+    # New prices would give: 2x75 + 1x45 = 195
+    
+    # Process refund
+    result = process_refund(db=db_session, order_id=order.id)
+    
+    # Refund should be $130 (original), NOT $195 (current prices)
+    assert result["refund_amount"] == 130.00
+    assert result["refund_amount"] == original_total
