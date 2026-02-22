@@ -269,3 +269,48 @@ def test_refund_multiple_items_uses_order_total(db_session, sample_customer):
     # Refund should be $130 (original), NOT $195 (current prices)
     assert result["refund_amount"] == 130.00
     assert result["refund_amount"] == original_total
+
+
+def test_refund_status_is_set_correctly(db_session, sample_product, sample_customer):
+    """
+    Test that refund correctly sets order status to 'refunded'.
+    """
+    order = place_order(
+        db=db_session,
+        customer_id=sample_customer.id,
+        items=[{"product_id": sample_product.id, "quantity": 1}]
+    )
+    
+    assert order.status == "confirmed"
+    
+    result = process_refund(db=db_session, order_id=order.id)
+    
+    db_session.refresh(order)
+    assert order.status == "refunded"
+    assert result["status"] == "refunded"
+    assert order.refund_amount == order.total
+
+
+def test_refund_amount_stored_on_order(db_session, sample_product, sample_customer):
+    """
+    Test that refund_amount is correctly stored on the order record.
+    """
+    order = place_order(
+        db=db_session,
+        customer_id=sample_customer.id,
+        items=[{"product_id": sample_product.id, "quantity": 2}]
+    )
+    
+    expected_refund = order.total  # 200.00
+    
+    # Change price after order
+    sample_product.price = 150.00
+    db_session.commit()
+    
+    process_refund(db=db_session, order_id=order.id)
+    
+    db_session.refresh(order)
+    # Verify the stored refund_amount matches order.total, not current prices
+    assert order.refund_amount == expected_refund
+    assert order.refund_amount == 200.00
+    assert order.refund_amount != 300.00  # Would be wrong if using current price (2 x 150)
