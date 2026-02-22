@@ -7,9 +7,11 @@ Handles:
   - Refund processing
 """
 
+import logging
 from sqlalchemy.orm import Session
 from models import Product, Customer, Order, OrderItem, PromoCode
 
+logger = logging.getLogger(__name__)
 
 # ── Loyalty tier discount mapping ─────────────────────────────────
 
@@ -149,6 +151,12 @@ def place_order(
 
     db.commit()
     db.refresh(order)
+    
+    logger.info(
+        "Order #%d placed: total=%.2f customer_id=%d",
+        order.id, order.total, customer.id
+    )
+    
     return order
 
 
@@ -158,6 +166,11 @@ def process_refund(db: Session, order_id: int) -> dict:
     Business rule: The refund amount should be the TOTAL that the customer
     actually paid at the time of purchase (order.total), and stock should
     be restored based on the quantities in the order items.
+
+    IMPORTANT: Do NOT recalculate from current product prices. The order.total
+    field already contains the correct amount including:
+    - The price at the time of purchase (stored in order_items.price_at_purchase)
+    - Any discounts (loyalty tier, promo codes) that were applied
 
     Args:
         db: Database session.
@@ -204,6 +217,11 @@ def process_refund(db: Session, order_id: int) -> dict:
     order.status = "refunded"
     order.refund_amount = round(refund_amount, 2)
     db.commit()
+
+    logger.info(
+        "Refund processed: order_id=%d refund_amount=%.2f original_total=%.2f",
+        order.id, refund_amount, order.total
+    )
 
     return {
         "order_id": order.id,
