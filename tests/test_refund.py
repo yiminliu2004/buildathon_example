@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Product, Customer, Order, OrderItem
+from models import Base, Product, Customer, Order, OrderItem, PromoCode
 from services import process_refund, place_order
 
 
@@ -52,6 +52,21 @@ def sample_customer(db_session):
     return customer
 
 
+@pytest.fixture
+def sample_promo_code(db_session):
+    """Create a sample promo code."""
+    promo = PromoCode(
+        code="WELCOME20",
+        discount_percent=20.0,
+        is_active=True,
+        min_order_amount=0.0
+    )
+    db_session.add(promo)
+    db_session.commit()
+    db_session.refresh(promo)
+    return promo
+
+
 def test_refund_uses_order_total_not_current_price(db_session, sample_product, sample_customer):
     """
     Test that refund amount equals order.total (price at purchase),
@@ -78,6 +93,36 @@ def test_refund_uses_order_total_not_current_price(db_session, sample_product, s
     assert result["refund_amount"] == 200.00
     assert result["refund_amount"] == original_total
     assert result["refund_amount"] != 300.00  # Would be wrong if using current price
+
+
+def test_refund_uses_order_total_with_discount(db_session, sample_product, sample_customer, sample_promo_code):
+    """
+    Test that refund amount equals order.total including discounts,
+    not the pre-discount subtotal or current prices.
+    """
+    # Place an order with a 20% discount promo code
+    order = place_order(
+        db=db_session,
+        customer_id=sample_customer.id,
+        items=[{"product_id": sample_product.id, "quantity": 1}],
+        promo_code_str="WELCOME20"
+    )
+    
+    # Verify order was placed with discount
+    assert order.subtotal == 100.00  # Original price
+    assert order.discount_amount == 20.00  # 20% discount
+    assert order.total == 80.00  # Final amount paid
+    
+    # Change product price after order
+    sample_product.price = 150.00
+    db_session.commit()
+    
+    # Process refund
+    result = process_refund(db=db_session, order_id=order.id)
+    
+    # Refund should be $80 (what customer paid), not $100 (subtotal) or $150 (current price)
+    assert result["refund_amount"] == 80.00
+    assert result["refund_amount"] == order.total
 
 
 def test_refund_restores_stock(db_session, sample_product, sample_customer):
@@ -157,3 +202,30 @@ def test_refund_deducts_loyalty_points_correctly(db_session, sample_product, sam
     db_session.refresh(sample_customer)
     # Points should be deducted based on order.total ($100), not current price ($200)
     assert sample_customer.loyalty_points == initial_points
+
+
+def test_refund_with_price_decrease(db_session, sample_product, sample_customer):
+    """
+    Test that refund still uses order.total when product price has decreased.
+    Customer should get back what they paid, not the lower current price.
+    """
+    # Place an order at original price ($100)
+    order = place_order(
+        db=db_session,
+        customer_id=sample_customer.id,
+        items=[{"product_id": sample_product.id, "quantity": 1}]
+    )
+    
+    original_total = order.total
+    assert original_total == 100.00
+    
+    # Price DECREASED after order
+    sample_product.price = 50.00
+    db_session.commit()
+    
+    # Process refund
+    result = process_refund(db=db_session, order_id=order.id)
+    
+    # Refund should be $100 (what customer paid), NOT $50 (current lower price)
+    assert result["refund_amount"] == 100.00
+    assert result["refund_amount"] == original_total
